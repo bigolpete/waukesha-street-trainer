@@ -58,9 +58,22 @@ writeFileSync(
 console.log(`boundary: ${boundary.outer.length} outer ring(s), ${boundary.inner.length} hole(s)`);
 
 // ---------------------------------------------------------------- road geometry by OSM name
+// OSM name fixes by way id (checked against county 911 addresses).
+const RENAME_WAYS = {
+  21656457: "Pendleton Place", // OSM calls the whole loop Pendleton Court; only the short stub is the Court
+  689699499: "Pendleton Place",
+};
+const readRoads = (p) => {
+  const j = read(p);
+  for (const w of j.elements) if (RENAME_WAYS[w.id] && w.tags) w.tags.name = RENAME_WAYS[w.id];
+  return j;
+};
+const roadsRaw = readRoads("raw/roads.json");
+const networkRaw = existsSync("raw/network.json") ? readRoads("raw/network.json") : null;
+
 const RANK = { motorway: 6, trunk: 5, primary: 5, secondary: 4, tertiary: 3, unclassified: 2, residential: 1, living_street: 1 };
 const geo = new Map(); // osm name -> { lines, rank }
-for (const w of read("raw/roads.json").elements) {
+for (const w of roadsRaw.elements) {
   const name = w.tags.name;
   if (!geo.has(name)) geo.set(name, { lines: [], rank: 0 });
   const g = geo.get(name);
@@ -71,11 +84,11 @@ for (const w of read("raw/roads.json").elements) {
 // Extend each street past the city limits along its full connected length (same name, sharing a
 // node), so a click anywhere on the real road counts. Only connected pieces are added, so a
 // same-named street in a neighboring community is not included.
-if (existsSync("raw/network.json")) {
+if (networkRaw) {
   const key = (p) => p[0] + "," + p[1];
   const outside = new Map(); // name -> [lines] of ways not already in roads.json
-  const have = new Set(read("raw/roads.json").elements.map((w) => w.id));
-  for (const w of read("raw/network.json").elements) {
+  const have = new Set(roadsRaw.elements.map((w) => w.id));
+  for (const w of networkRaw.elements) {
     if (!w.tags.name || have.has(w.id) || !geo.has(w.tags.name)) continue;
     if (!outside.has(w.tags.name)) outside.set(w.tags.name, []);
     outside.get(w.tags.name).push(w.geometry.map((p) => [r5(p.lat), r5(p.lon)]));
@@ -108,7 +121,7 @@ const tier = (hw) => {
   const h = hw.replace("_link", "");
   return h === "motorway" || h === "trunk" ? "highway" : ["primary", "secondary", "tertiary"].includes(h) ? "major" : "minor";
 };
-const netSrc = existsSync("raw/network.json") ? read("raw/network.json") : read("raw/roads.json");
+const netSrc = networkRaw || roadsRaw;
 // Interstate / US / state highways (ref like "US 18", "WI 59", "I 94") draw as highways too.
 const isRoute = (t) => /(^|;)\s*(I|US|WI)\s/.test(t.ref || "") && !/^(residential|unclassified)/.test(t.highway);
 for (const w of netSrc.elements) {
@@ -237,7 +250,9 @@ function parseBlocks(s) {
   });
 }
 
-const VALID_CAT = ["Primary", "Secondary", "Tertiary"];
+// "Dead end" = courts, circles and streets with only one way in (worked out below for Tertiary streets)
+const VALID_CAT = ["Primary", "Secondary", "Tertiary", "Dead end"];
+const STATION_NAMES = Object.values(STATIONS).map((s) => s.name);
 const streets = [];
 const missing = [];
 for (const row of parseCSV(readFileSync(CSV_PATH, "utf8"))) {
@@ -255,6 +270,13 @@ for (const row of parseCSV(readFileSync(CSV_PATH, "utf8"))) {
     name: row.name,
     category,
     district: row.district ? row.district.split("|").map((s) => s.trim()) : null, // null = work out from map
+    // stations whose curated secondary list has this street (Secondary streets only)
+    secondaryFor: category === "Secondary" && row.secondary_for
+      ? row.secondary_for.split("|").map((s) => s.trim()).filter((s) => {
+          if (!STATION_NAMES.includes(s)) console.log(`WARNING: ${row.name}: unknown station "${s}" in secondary_for`);
+          return STATION_NAMES.includes(s);
+        })
+      : [],
     blocks: parseBlocks(row.blocks),
     notes: row.notes || "",
     lines,
@@ -306,6 +328,57 @@ for (const st of [...streets]) {
   if (!keep.length) streets.splice(streets.indexOf(st), 1);
 }
 if (merged.length) console.log("merged prefix-less map pieces: " + [...new Set(merged)].join(", "));
+
+// ---------------------------------------------------------------- courts & dead ends
+// A Tertiary street becomes "Dead end" when it is a Court/Circle, or when every connected piece of
+// it has only one way in: all the places other roads touch it are within DEAD_END_GAP of each other
+// (a cul-de-sac, a lollipop loop, or a stub off a single intersection).
+{
+  const DEAD_END_GAP = 60; // m - a divided entrance still counts as one way in
+  const key = (p) => p[0] + "," + p[1];
+  const nodeUse = new Map(); // node -> Set of way names touching it ("" for unnamed)
+  for (const w of netSrc.elements) {
+    if (!w.geometry) continue;
+    const n = w.tags.name ? norm(w.tags.name) : "#" + w.id;
+    for (const p of w.geometry) {
+      const k = key([r5(p.lat), r5(p.lon)]);
+      (nodeUse.get(k) ?? nodeUse.set(k, new Set()).get(k)).add(n);
+    }
+  }
+  const isCourt = (st) => /\b(court|circle)$/.test(norm(st.name));
+  let courts = 0, deadEnds = 0;
+  for (const st of streets) {
+    if (st.category !== "Tertiary") continue;
+    if (isCourt(st)) { st.category = "Dead end"; courts++; continue; }
+    // own names, plus the prefix-less twin pieces merged into it ("sunset drive" in East Sunset Drive)
+    const own = new Set(st.keys.flatMap((k) => [k, k.replace(/^(north|south|east|west|northwest|northeast|southwest|southeast) /, "")]));
+    // group the street's lines into connected pieces (shared nodes)
+    const pieces = [];
+    for (const l of st.lines) {
+      const ks = new Set(l.map(key));
+      const hits = pieces.filter((pc) => [...ks].some((k) => pc.nodes.has(k)));
+      let len = 0;
+      for (let i = 1; i < l.length; i++) len += metersBetween(l[i - 1], l[i]);
+      const pc = { nodes: ks, pts: [...l], len };
+      for (const h of hits) {
+        h.nodes.forEach((k) => pc.nodes.add(k));
+        pc.pts.push(...h.pts);
+        pc.len += h.len;
+        pieces.splice(pieces.indexOf(h), 1);
+      }
+      pieces.push(pc);
+    }
+    // every piece's junctions sit together (and not at both ends of a short through-street)
+    const oneWayIn = pieces.every((pc) => {
+      const junctions = pc.pts.filter((p) => [...(nodeUse.get(key(p)) || [])].some((n) => !own.has(n)));
+      let span = 0;
+      for (const a of junctions) for (const b of junctions) span = Math.max(span, metersBetween(a, b));
+      return span <= Math.min(DEAD_END_GAP, pc.len / 2);
+    });
+    if (oneWayIn) { st.category = "Dead end"; deadEnds++; }
+  }
+  console.log(`dead ends: ${courts} courts/circles + ${deadEnds} other one-way-in streets`);
+}
 
 // ---------------------------------------------------------------- buildings (county Structures)
 // Footprints inside the city, packed as integer offsets (1e-5 deg, about 1 m) to keep the file small:

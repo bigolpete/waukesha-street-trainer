@@ -301,8 +301,21 @@
     const d = district && districtByName(district);
     return d ? list.filter((a) => inDistrict([a[1], a[2]], d)) : list;
   }
+  // Secondary streets are curated per station: in a station that doesn't list it, a secondary
+  // street counts as Tertiary. "Whole city" keeps every secondary street.
+  const catIn = (s, district) =>
+    s.category === "Secondary" && district && !(s.secondaryFor || []).includes(district) ? "Tertiary" : s.category;
+  const CAT_LABEL = { "Dead end": "Court / dead end" };
+  const catOf = (q) => q.cat || q.street.category;
+  const catText = (q) => CAT_LABEL[catOf(q)] || catOf(q);
   function streetPool(st) {
-    return STREETS.filter((s) => st.cats.includes(s.category) && (!st.district || s.districts.includes(st.district)));
+    return STREETS.filter((s) => {
+      const cat = catIn(s, st.district);
+      if (!st.cats.includes(cat)) return false;
+      if (!st.district) return true;
+      // a station's own secondary list counts even where the road just touches the area
+      return (cat === "Secondary" && s.secondaryFor.includes(st.district)) || s.districts.includes(st.district);
+    });
   }
   // A pool entry is one street; in address mode only streets that have addresses in the area.
   function poolFor(st) {
@@ -311,10 +324,11 @@
   }
   function makeQuestions(st) {
     return shuffle(poolFor(st)).slice(0, st.count).map((s) => {
-      if (st.mode !== "address") return { street: s, addr: null };
+      const cat = catIn(s, st.district);
+      if (st.mode !== "address") return { street: s, addr: null, cat };
       const list = addressesFor(s, st.district);
       const a = list[Math.floor(Math.random() * list.length)];
-      return { street: s, addr: { label: a[0], at: [a[1], a[2]], b: a[3] ?? -1 } };
+      return { street: s, addr: { label: a[0], at: [a[1], a[2]], b: a[3] ?? -1 }, cat };
     });
   }
 
@@ -392,7 +406,7 @@
     $("giveUpBtn").classList.remove("hidden");
     $("progress").textContent = `Question ${game.i + 1} of ${game.questions.length}` + (q.addr ? " - address" : "");
     $("target").textContent = questionTitle(q);
-    $("targetCat").textContent = q.street.category;
+    $("targetCat").textContent = catText(q);
     updateScore();
     viewArea();
   }
@@ -526,7 +540,7 @@
     html += `<dl>
       ${q.addr ? `<dt>Address</dt><dd>${esc(q.addr.label)}</dd>` : ""}
       <dt>Street</dt><dd>${esc(s.name)}</dd>
-      <dt>Type</dt><dd>${esc(s.category)}</dd>
+      <dt>Type</dt><dd>${esc(catText(q))}${s.secondaryFor && s.secondaryFor.length ? ` <span class="hint">(on the ${esc(s.secondaryFor.join(" &amp; "))} list)</span>` : ""}</dd>
       <dt>Area</dt><dd>${esc(q.addr ? areaOf(q.addr.at) : s.districts.join(", ") || "-")}</dd>
       <dt>Blocks</dt><dd>${blocksHtml(s)}</dd>
       ${s.notes ? `<dt>Notes</dt><dd>${esc(s.notes)}</dd>` : ""}
@@ -578,7 +592,7 @@
       question: questionTitle(q),
       type: q.addr ? "address" : "street",
       street: q.street.name,
-      category: q.street.category,
+      category: catOf(q),
       station: q.addr ? areaOf(q.addr.at) : q.street.districts.join(" / "),
       result: r.skipped ? "skipped" : "marked wrong",
       distance_m: r.dist == null ? "" : Math.round(r.dist),

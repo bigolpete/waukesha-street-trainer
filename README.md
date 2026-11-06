@@ -13,7 +13,7 @@ background map tiles and the Leaflet map library.
 | File | What it is |
 |---|---|
 | `data/streets.csv` | **The street list. Edit this** (Excel works). One row per street. |
-| `data/districts.js` | Station running areas. **Currently guessed** (Central circle + N/E/S/W wedges). |
+| `data/districts.js` | Station running areas (Waukesha County GIS, Waukesha City Fire zones). |
 | `data/streets.js`, `data/network.js`, `data/boundary.js` | Generated - don't edit by hand. |
 | `tools/fetch-osm.mjs` | Re-downloads city limits + road geometry from OpenStreetMap. |
 | `tools/build-data.mjs` | Rebuilds the generated files from `streets.csv`. |
@@ -24,8 +24,9 @@ background map tiles and the Leaflet map library.
 | Column | Example | Notes |
 |---|---|---|
 | `name` | `W Main St` | Shown in the game. Abbreviations are fine - they're matched to the map automatically. |
-| `category` | `Primary` | `Primary`, `Secondary` or `Tertiary`. |
-| `district` | `Central` or `North\|Central` | Optional. Blank = worked out from the map. |
+| `category` | `Primary` | `Primary`, `Secondary`, `Tertiary` or `Dead end`. Tertiary courts, circles and one-way-in streets become `Dead end` automatically. |
+| `secondary_for` | `Station 1\|Station 5` | Secondary streets only: the stations whose list has it. In another station it counts as Tertiary. |
+| `district` | `Station 1` or `Station 1\|Station 2` | Optional. Blank = worked out from the map. |
 | `blocks` | `100-1900` or `100-900 N; 100-1500 S` | 100-block ranges, `;` between ranges. |
 | `map_name` | `East Main Street\|West Main Street` | Optional. Use when the name doesn't match the map, or to combine pieces. |
 | `notes` | `Divided hwy north of Moreland` | Optional, shown after the guess. |
@@ -36,12 +37,12 @@ node tools/build-data.mjs
 ```
 It lists any street it couldn't find on the map - fill in `map_name` for those.
 
-The placeholder CSV was created from every named road in the city; its categories are a guess
-from the OpenStreetMap road class (6 Primary / 77 Secondary / 839 Tertiary).
-
-## Real running areas
-Replace `data/districts.js` with the real first-due polygons (same format: `name`, `color`,
-`rings` of `[lat, lon]`). A GeoJSON/shapefile export from city or county GIS can be converted.
+The department's Primary list and per-station Secondary lists are in `tools/curated-list.txt`.
+To re-apply them after editing that file (it rewrites `category` and `secondary_for` for every row):
+```
+node tools/apply-curated-list.mjs
+node tools/build-data.mjs
+```
 
 ## Address mode
 The "Up the stakes" checkbox asks for exact addresses (e.g. *2000 S West Ave*) instead of streets.

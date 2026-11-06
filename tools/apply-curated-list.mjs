@@ -3,6 +3,8 @@
 //   node tools/apply-curated-list.mjs   then   node tools/build-data.mjs
 //
 // - streets under [Primary] become Primary
+// - streets under [Secondary] become Secondary in every station they run through (secondary_for
+//   left blank); a name with no N/S/E/W there also covers its directional parts
 // - streets under [Station N] become Secondary, with "Station N" in secondary_for
 //   (a street on several station lists gets them all, e.g. "Station 1|Station 5")
 // - every other street becomes Tertiary; build-data.mjs then turns courts, circles and
@@ -36,7 +38,9 @@ const norm = (s) => {
 // ---- read the list
 const primary = new Set();
 const secondaryFor = new Map(); // norm name -> Set of stations
+const anySecondary = new Set(); // secondary in whatever stations the road runs through
 const listed = new Map(); // norm name -> original text (to report misses)
+const noDir = (k) => k.replace(/^(north|south|east|west|northwest|northeast|southwest|southeast) /, "");
 let section = null;
 for (const raw of readFileSync(LIST_PATH, "utf8").split(/\r?\n/)) {
   const line = raw.trim();
@@ -46,6 +50,7 @@ for (const raw of readFileSync(LIST_PATH, "utf8").split(/\r?\n/)) {
   const k = norm(line);
   listed.set(k, line);
   if (section === "Primary") primary.add(k);
+  else if (section === "Secondary") anySecondary.add(k);
   else if (section) (secondaryFor.get(k) ?? secondaryFor.set(k, new Set()).get(k)).add(section);
 }
 
@@ -84,6 +89,10 @@ for (const r of rows) {
   const k = norm(r.name);
   if (primary.has(k)) { r.category = "Primary"; r.secondary_for = ""; found.add(k); }
   else if (secondaryFor.has(k)) { r.category = "Secondary"; r.secondary_for = [...secondaryFor.get(k)].sort().join("|"); found.add(k); }
+  else if (anySecondary.has(k) || anySecondary.has(noDir(k))) {
+    r.category = "Secondary"; r.secondary_for = ""; // blank = every station it runs through
+    found.add(anySecondary.has(k) ? k : noDir(k));
+  }
   else { r.category = "Tertiary"; r.secondary_for = ""; }
   counts[r.category]++;
 }

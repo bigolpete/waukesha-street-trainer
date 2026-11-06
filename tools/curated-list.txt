@@ -1,5 +1,6 @@
 # Curated street categories from the department (Nov 2026).
-# "PRIMARY" = primary everywhere; "Station N" = secondary streets for that station's area.
+# [Primary] = primary everywhere; [Secondary] = secondary wherever the road runs;
+# [Station N] = secondary streets for that station's area only.
 # Everything else is Tertiary, except courts/circles and dead-end streets ("Courts & dead ends").
 # Used by tools/apply-curated-list.mjs to set the category column of data/streets.csv.
 
@@ -40,6 +41,17 @@ S. West Ave
 Les Paul Pkwy
 Hwy 59 Arcadian Ave
 Hwy 164
+I-94
+
+# Secondary in every station they run through. A name without N/S/E/W
+# here also covers its North/South/East/West parts (Hartwell = N + S Hartwell).
+[Secondary]
+Bluemound Rd
+MacArthur Rd
+Hartwell Ave
+Big Bend Rd
+Sentry Dr
+Springdale Rd
 
 [Station 1]
 N. Barstow St.

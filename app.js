@@ -301,10 +301,13 @@
     const d = district && districtByName(district);
     return d ? list.filter((a) => inDistrict([a[1], a[2]], d)) : list;
   }
-  // Secondary streets are curated per station: in a station that doesn't list it, a secondary
-  // street counts as Tertiary. "Whole city" keeps every secondary street.
-  const catIn = (s, district) =>
-    s.category === "Secondary" && district && !(s.secondaryFor || []).includes(district) ? "Tertiary" : s.category;
+  // Secondary streets are mostly curated per station: in a station that doesn't list it, a secondary
+  // street counts as Tertiary. One with no station list is secondary wherever it runs.
+  // "Whole city" keeps every secondary street.
+  const catIn = (s, district) => {
+    const list = s.secondaryFor || [];
+    return s.category === "Secondary" && district && list.length && !list.includes(district) ? "Tertiary" : s.category;
+  };
   const CAT_LABEL = { "Dead end": "Court / dead end" };
   const catOf = (q) => q.cat || q.street.category;
   const catText = (q) => CAT_LABEL[catOf(q)] || catOf(q);
